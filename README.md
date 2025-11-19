@@ -1,5 +1,7 @@
 ![image|500x500, 100%](upload://hSePoNhAhKYQI5QSoKvPupRKso0.png)
 
+# Safecall
+
 ## Overview
 
 **SafeCall** is a lightweight, great error handling wrapper for Roblox Lua. It simplifies safe function execution by automatically handling errors, retries, async support, rate limiting, profiling, and more, reducing crashes and improving debugging.

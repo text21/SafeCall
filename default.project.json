@@ -1,15 +1,6 @@
 {
   "name": "SafeCall",
   "tree": {
-    "$className": "DataModel",
-    "ReplicatedStorage": {
-      "$className": "ReplicatedStorage",
-      "Packages": {
-        "$path": "Packages"
-      },
-      "SafeCall": {
-        "$path": "src/SafeCall"
-      }
-    }
+    "$path": "src"
   }
 }

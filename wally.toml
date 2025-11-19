@@ -1,8 +1,11 @@
 [package]
 name = "akira/safecall"
+description = "A library for creating error and memory safe code."
 version = "1.2.0"
-registry = "https://github.com/UpliftGames/wally-index"
+license = "MIT"
+authors = ["Akira"]
 realm = "shared"
+registry = "https://github.com/UpliftGames/wally-index"
+repository = "https://github.com/text21/SafeCall"
 
 [dependencies]
-promise = "evaera/promise@4.0.0"
