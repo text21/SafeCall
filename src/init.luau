@@ -11,13 +11,13 @@ SafeCall.__index = SafeCall
 
 local RunService = game:GetService("RunService")
 
-SafeCall._globalHandlers = {}
-SafeCall._errorFilters = {}
-SafeCall._taskScheduler = {}
-SafeCall._retryHandler = nil
-
 function SafeCall.new(logFunction)
-	local self = setmetatable({}, SafeCall)
+	local self = setmetatable({
+		_globalHandlers = {},
+		_errorFilters = {},
+		_taskScheduler = {},
+		_retryHandler = nil,
+	}, SafeCall)
 
 	self.Log = logFunction or function(err)
 		warn("[SafeCall]:", err)
@@ -49,11 +49,11 @@ function SafeCall:SetRetryDefaults(attempts, delay, backoff)
 end
 
 function SafeCall:AddErrorIgnorePattern(pattern)
-	table.insert(SafeCall._errorFilters, pattern)
+	table.insert(self._errorFilters, pattern)
 end
 
 function SafeCall:SetRetryHandler(fn)
-	SafeCall._retryHandler = fn
+	self._retryHandler = fn
 end
 
 function SafeCall:Call(fn, ...)
@@ -63,13 +63,15 @@ function SafeCall:Call(fn, ...)
 	if not success then
 		local msg = tostring(results[1])
 
-		for _, pattern in ipairs(SafeCall._errorFilters) do
+		for _, pattern in ipairs(self._errorFilters) do
 			if string.match(msg, pattern) then
 				return success, results[1] -- Ignore filtered error
 			end
 		end
 
-		for _, handler in ipairs(SafeCall._globalHandlers) do
+		self.Log(msg)
+
+		for _, handler in ipairs(self._globalHandlers) do
 			pcall(handler, msg, debug.traceback())
 		end
 	end
@@ -83,7 +85,7 @@ function SafeCall:CallWithTag(tag, fn, ...)
 	if not success then
 		local msg = tostring(results[1])
 
-		for _, pattern in ipairs(SafeCall._errorFilters) do
+		for _, pattern in ipairs(self._errorFilters) do
 			if string.match(msg, pattern) then
 				return success, results[1] -- Ignore filtered error
 			end
@@ -92,7 +94,7 @@ function SafeCall:CallWithTag(tag, fn, ...)
 		tag = tag and ("[" .. tag .. "] ") or ""
 		self.Log(tag .. msg)
 
-		for _, handler in ipairs(SafeCall._globalHandlers) do
+		for _, handler in ipairs(self._globalHandlers) do
 			pcall(handler, msg, debug.traceback(), tag)
 		end
 	end
@@ -112,7 +114,7 @@ function SafeCall:CallWithRetry(fn, attempts, delay, backoff, ...)
 		local success, result = pcall(fn, table.unpack(args))
 		if success then return true, result end
 
-		if SafeCall._retryHandler and not SafeCall._retryHandler(result) then
+		if self._retryHandler and not self._retryHandler(result) then
 			break
 		end
 
@@ -125,6 +127,28 @@ function SafeCall:CallWithRetry(fn, attempts, delay, backoff, ...)
 	end
 
 	return false, "All retry attempts failed"
+end
+
+function SafeCall:SetPromiseModule(promiseModule)
+	self.Promise = promiseModule
+end
+
+function SafeCall:CallAsync(fn, ...)
+	if not self.Promise then
+		error("No Promise module provided. Use SafeCall:SetPromiseModule(Promise)")
+	end
+
+	local args = { ... }
+
+	return self.Promise.new(function(resolve, reject)
+		local success, result = pcall(fn, table.unpack(args))
+		if success then
+			resolve(result)
+		else
+			self.Log(result)
+			reject(result)
+		end
+	end)
 end
 
 function SafeCall:CallWithThread(deferred, fn, ...)
@@ -151,10 +175,19 @@ function SafeCall:CallDelayed(delay, fn, ...)
 end
 
 function SafeCall:ProtectTable(tbl)
-	local metatable = table.clone(getmetatable(tbl))
+	local oldMt = getmetatable(tbl)
+	local newMt = oldMt and table.clone(oldMt) or {}
+
+	local oldIndex = oldMt and oldMt.__index or function(self, idx)
+		return self[idx]
+	end
+
+	local oldCall = oldMt and oldMt.__call or function(self, ...)
+		return self(...)
+	end
 	
-	metatable.__index = function(_, idx)
-		local val = tbl[idx]
+	newMt.__index = function(_, idx)
+		local val = oldIndex(tbl, idx)
 
 		if typeof(val) == "function" then
 			return function(...)
@@ -165,11 +198,11 @@ function SafeCall:ProtectTable(tbl)
 		return val
 	end	
 
-	metatable.__call = function(_, ...)
-		return select(2, self:Call(tbl, ...))
+	newMt.__call = function(_, ...)
+		return select(2, self:Call(oldCall, tbl, ...))
 	end
 
-	return setmetatable({}, metatable)
+	return setmetatable({}, newMt)
 end
 
 function SafeCall:WrapEvent(remote, callback)
@@ -178,16 +211,16 @@ function SafeCall:WrapEvent(remote, callback)
 	if remote:IsA("RemoteEvent") then
 		if RunService:IsServer() then
 			return remote.OnServerEvent:Connect(function(player, ...)
-				self:Call(callback, nil, player, ...)
+				self:Call(callback, player, ...)
 			end)
 		else
 			return remote.OnClientEvent:Connect(function(...)
-				self:Call(callback, nil, ...)
+				self:Call(callback, ...)
 			end)
 		end
 	elseif remote:IsA("BindableEvent") then
 		return remote.Event:Connect(function(...)
-			self:Call(callback, nil, ...)
+			self:Call(callback, ...)
 		end)
 	else
 		error("Expected RemoteEvent or BindableEvent")
@@ -200,18 +233,18 @@ function SafeCall:WrapFunction(remote, callback)
 	if remote:IsA("RemoteFunction") then
 		if RunService:IsServer() then
 			remote.OnServerInvoke = function(player, ...)
-				local success, result = self:Call(callback, nil, player, ...)
+				local success, result = self:Call(callback, player, ...)
 				return success and result or nil
 			end
 		else
 			remote.OnClientInvoke = function(...)
-				local success, result = self:Call(callback, nil, ...)
+				local success, result = self:Call(callback, ...)
 				return success and result or nil
 			end
 		end
 	elseif remote:IsA("BindableFunction") then
 		remote.OnInvoke = function(...)
-			local success, result = self:Call(callback, nil, ...)
+			local success, result = self:Call(callback, ...)
 			return success and result or nil
 		end
 	else
@@ -233,7 +266,7 @@ function SafeCall:CallWithTimeout(timeout, fn, ...)
 	local result
 
 	task.spawn(function()
-		result = { self:Call(fn, nil, table.unpack(args)) }
+		result = { self:Call(fn, table.unpack(args)) }
 		completed = true
 	end)
 
@@ -273,7 +306,7 @@ function SafeCall:CallWithCircuitBreaker(breaker, fn, ...)
 		return false, "Circuit breaker open"
 	end
 
-	local success, result = self:Call(fn, nil, ...)
+	local success, result = self:Call(fn, ...)
 
 	if success then
 		if breaker.state == "HALF_OPEN" then
@@ -316,7 +349,7 @@ function SafeCall:CallWithRateLimit(limiter, fn, ...)
 	end
 
 	table.insert(limiter.calls, now)
-	return self:Call(fn, nil, ...)
+	return self:Call(fn, ...)
 end
 
 function SafeCall:ConnectSafe(signal, callback, options)
@@ -365,7 +398,7 @@ function SafeCall:Memoize(fn, ttl)
 			return entry.success, entry.result
 		end
 
-		local success, result = self:Call(fn, nil, table.unpack(rawArgs))
+		local success, result = self:Call(fn, table.unpack(rawArgs))
 		cache[key] = {
 			success = success,
 			result = result,
@@ -390,7 +423,7 @@ function SafeCall:CallWithProfiler(profiler, fn, ...)
 	local start = tick()
 	profiler.calls += 1
 
-	local success, result = self:Call(fn, nil, ...)
+	local success, result = self:Call(fn, ...)
 
 	local duration = tick() - start
 	profiler.totalTime += duration
@@ -418,35 +451,35 @@ function SafeCall:GetProfilerStats(profiler)
 end
 
 function SafeCall:AddGlobalHandler(handler)
-	table.insert(SafeCall._globalHandlers, handler)
+	table.insert(self._globalHandlers, handler)
 end
 
 function SafeCall:RemoveGlobalHandler(handler)
-	for i, h in ipairs(SafeCall._globalHandlers) do
+	for i, h in ipairs(self._globalHandlers) do
 		if h == handler then
-			table.remove(SafeCall._globalHandlers, i)
+			table.remove(self._globalHandlers, i)
 			break
 		end
 	end
 end
 
 function SafeCall:Schedule(name, interval, fn)
-	if SafeCall._taskScheduler[name] then
+	if self._taskScheduler[name] then
 		return
 	end
 
-	SafeCall._taskScheduler[name] = true
+	self._taskScheduler[name] = true
 
 	task.spawn(function()
-		while SafeCall._taskScheduler[name] do
-			self:Call(fn, name)
+		while self._taskScheduler[name] do
+			self:CallWithTag(fn, name)
 			task.wait(interval)
 		end
 	end)
 end
 
 function SafeCall:StopSchedule(name)
-	SafeCall._taskScheduler[name] = nil
+	self._taskScheduler[name] = nil
 end
 
 return SafeCall
