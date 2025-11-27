@@ -3,7 +3,7 @@
 	Description: Lightweight fail-safe wrapper for unsafe function calls
 	Repository: text21/SafeCall
 	Author: Akira
-	Version: 1.3.0
+	Version: 1.4.0
 --]]
 
 local SafeCall = {}
@@ -57,11 +57,11 @@ function SafeCall:SetRetryHandler(fn)
 end
 
 function SafeCall:Call(fn, ...)
-	local results = { pcall(fn, ...) }
-	local success = table.remove(results, 1)
+	local results = table.pack(pcall(fn, ...))
+	local success = results[1]
 
 	if not success then
-		local msg = tostring(results[1])
+		local msg = tostring(results[2])
 
 		for _, pattern in ipairs(self._errorFilters) do
 			if string.match(msg, pattern) then
@@ -72,19 +72,19 @@ function SafeCall:Call(fn, ...)
 		self.Log(msg)
 
 		for _, handler in ipairs(self._globalHandlers) do
-			pcall(handler, msg, debug.traceback())
+			pcall(handler, { message = msg, stack = debug.traceback() })
 		end
 	end
 
-	return success, table.unpack(results)
+	return success, table.unpack(results, 2, results.n)
 end
 
 function SafeCall:CallWithTag(tag, fn, ...)
-	local results = { pcall(fn, ...) }
-	local success = table.remove(results, 1)
+	local results = table.pack(pcall(fn, ...))
+	local success = results[1]
 
 	if not success then
-		local msg = tostring(results[1])
+		local msg = tostring(results[2])
 
 		for _, pattern in ipairs(self._errorFilters) do
 			if string.match(msg, pattern) then
@@ -96,11 +96,11 @@ function SafeCall:CallWithTag(tag, fn, ...)
 		self.Log(prefix .. msg)
 
 		for _, handler in ipairs(self._globalHandlers) do
-			pcall(handler, msg, debug.traceback(), prefix)
+			pcall(handler, { message = msg, stack = debug.traceback(), tag = tag }, prefix)
 		end
 	end
 
-	return success, table.unpack(results)
+	return success, table.unpack(results, 2, results.n)
 end
 
 function SafeCall:CallWithRetry(fn, attempts, delay, backoff, ...)
@@ -112,14 +112,30 @@ function SafeCall:CallWithRetry(fn, attempts, delay, backoff, ...)
 	local currentDelay = delay
 
 	for i = 1, attempts do
-		local success, result = pcall(fn, table.unpack(args))
-		if success then return true, result end
+		local resPack = table.pack(pcall(fn, table.unpack(args)))
+		local success = resPack[1]
 
-		if self._retryHandler and not self._retryHandler(result) then
-			break
+		if success then
+			return true, table.unpack(resPack, 2, resPack.n)
 		end
 
-		self.Log(string.format("[Retry %d/%d] %s", i, attempts, tostring(result)))
+		local err = resPack[2]
+
+		if self._retryHandler then
+			local ok, decision = pcall(self._retryHandler, err, i, attempts, currentDelay)
+			if not ok then
+				self.Log("Retry handler error: " .. tostring(decision))
+				break
+			end
+
+			if decision == false then
+				break
+			elseif type(decision) == "number" then
+				currentDelay = decision
+			end
+		end
+
+		self.Log(string.format("[Retry %d/%d] %s", i, attempts, tostring(err)))
 
 		if i < attempts then
 			task.wait(currentDelay)
@@ -142,8 +158,13 @@ function SafeCall:CallAsync(fn, ...)
 	local args = { ... }
 
 	return self.Promise.new(function(resolve, reject)
-		local ok, res = pcall(fn, table.unpack(args))
-		if ok then resolve(res) else reject(res) end
+		local resPack = table.pack(self:Call(fn, table.unpack(args)))
+		local ok = resPack[1]
+		if ok then
+			resolve(table.unpack(resPack, 2, resPack.n))
+		else
+			reject(resPack[2])
+		end
 	end)
 end
 
@@ -167,33 +188,55 @@ end
 
 function SafeCall:ProtectTable(tbl)
 	local oldMt = getmetatable(tbl)
-	local newMt = oldMt and table.clone(oldMt) or {}
+	local newMt = {}
 
-	local oldIndex = oldMt and oldMt.__index or function(self, idx)
-		return rawget(self, idx)
+	local proxy = {}
+
+	local function fetch(key)
+		local val = nil
+		if oldMt and oldMt.__index then
+			if type(oldMt.__index) == "function" then
+				val = oldMt.__index(tbl, key)
+			else
+				val = oldMt.__index[key]
+			end
+		end
+
+		if val == nil then
+			val = rawget(tbl, key)
+		end
+
+		return val
 	end
 
-	local oldCall = oldMt and oldMt.__call or function(self, ...)
-		return self(...)
-	end
-
-	newMt.__index = function(_, idx)
-		local val = oldIndex(tbl, idx)
+	newMt.__index = function(_, key)
+		local val = fetch(key)
 
 		if typeof(val) == "function" then
-			return function(...)
-				return select(2, self:Call(val, ...))
+			return function(selfArg, ...)
+				if selfArg == proxy then
+					return select(2, self:Call(val, tbl, ...))
+				else
+					return select(2, self:Call(val, selfArg, ...))
+				end
 			end
 		end
 
 		return val
 	end
 
-	newMt.__call = function(_, ...)
-		return select(2, self:Call(oldCall, tbl, ...))
+	newMt.__newindex = function(_, key, value)
+		rawset(tbl, key, value)
 	end
 
-	return setmetatable({}, newMt)
+	if oldMt and oldMt.__call then
+		newMt.__call = function(_, ...)
+			return select(2, self:Call(oldMt.__call, tbl, ...))
+		end
+	end
+
+	setmetatable(proxy, newMt)
+	return proxy
 end
 
 function SafeCall:WrapEvent(remote, callback)
@@ -224,19 +267,34 @@ function SafeCall:WrapFunction(remote, callback)
 	if remote:IsA("RemoteFunction") then
 		if RunService:IsServer() then
 			remote.OnServerInvoke = function(player, ...)
-				local ok, res = self:Call(callback, player, ...)
-				return ok and res or nil
+				local resPack = table.pack(self:Call(callback, player, ...))
+				local ok = resPack[1]
+				if ok then
+					return table.unpack(resPack, 2, resPack.n)
+				else
+					return nil
+				end
 			end
 		else
 			remote.OnClientInvoke = function(...)
-				local ok, res = self:Call(callback, ...)
-				return ok and res or nil
+				local resPack = table.pack(self:Call(callback, ...))
+				local ok = resPack[1]
+				if ok then
+					return table.unpack(resPack, 2, resPack.n)
+				else
+					return nil
+				end
 			end
 		end
 	elseif remote:IsA("BindableFunction") then
 		remote.OnInvoke = function(...)
-			local ok, res = self:Call(callback, ...)
-			return ok and res or nil
+			local resPack = table.pack(self:Call(callback, ...))
+			local ok = resPack[1]
+			if ok then
+				return table.unpack(resPack, 2, resPack.n)
+			else
+				return nil
+			end
 		end
 	else
 		error("Expected RemoteFunction or BindableFunction")
@@ -246,7 +304,7 @@ end
 function SafeCall:CallBatch(functions)
 	local results = {}
 	for i, fn in ipairs(functions) do
-		results[i] = { self:Call(fn) }
+		results[i] = table.pack(self:Call(fn))
 	end
 	return results
 end

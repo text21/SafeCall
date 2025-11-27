@@ -45,6 +45,8 @@ success, result = safe:Call(fn: function, ...any) -> (bool, any)
 
 Calls `fn` safely with arguments. Returns success status and result or error.
 
+Note: `Call` and related helpers preserve the full tuple of return values from `fn` (including `nil` values). If `fn` returns multiple values, `safe:Call(fn)` will return the same tuple.
+
 **CallWithRetry**
 
 ```
@@ -57,6 +59,11 @@ Calls `fn` with retry logic on failure.
 - `delay`: initial wait between retries (default 0.1s)
 - `backoff`: multiplier to increase delay after each retry (default 1.5)
 
+Extras:
+
+- The retry handler (set via `safe:SetRetryHandler`) receives `(err, attempt, attempts, delay)` and may return `false` to abort further retries or a numeric value to override the next delay. This lets you implement dynamic backoff or conditional aborts.
+- `CallWithRetry` preserves full multi-value returns when the wrapped function succeeds.
+
 **CallAsync**
 
 ```
@@ -65,6 +72,8 @@ promise = safe:CallAsync(fn: function, ...any) -> Promise
 
 Calls `fn` async, returns a Promise that resolves or rejects based on call success.
 Requires the `Promise` library.
+
+Note: `CallAsync` resolves with the full tuple returned by `fn` (preserving `nil` values). The project marks `CallAsync` and `SetPromiseModule` as deprecated in favor of `CallWithThread` for simple deferred execution — keep using a Promise adapter only if you need Promise-based flows.
 
 **Use case**: Run a function asynchronously and handle its result with Promises.
 **Best for**: Async workflows like data fetching or web requests.
@@ -127,7 +136,8 @@ protectedTable = safe:ProtectTable(tbl: table)
 ```
 
 Returns a version of `tbl` where all functions are wrapped with safe calls.
-**Use case**: Automatically wraps **all functions inside a table** with SafeCall error handling.
+**Behavior changes**: `ProtectTable` now returns a proxy that preserves colon-call (`:`) semantics and respects metamethods on the original table. Methods will be invoked with the original table as `self`, and non-function fields remain accessible and writable on the original table.
+**Use case**: Automatically wraps **all functions inside a table** with SafeCall error handling while preserving method bindings.
 **Best for**: Making whole utility modules or service interfaces crash-safe without rewriting every function.
 
 ## Example
@@ -195,6 +205,8 @@ Calls a list of functions safely, returning a table of success/result pairs.
 **Use case**: Executes a batch of functions safely, returns all results.
 **Best for**: Running multiple tasks (e.g. setup, cleanup) with error isolation.
 
+Details: Each entry in `results` is a packed-result table (use `table.unpack(results[i], 1, results[i].n)` to retrieve the full return tuple for that function). This preserves multiple return values per function in the batch.
+
 ## Example
 
 ```
@@ -214,6 +226,8 @@ success, result = safe:CallWithTimeout(timeout: number, fn: function, ...any)
 Calls `fn` safely but aborts if it exceeds `timeout` seconds.
 **Use case**: Ensures a function doesn’t run forever — fails if it takes too long.
 **Best for**: External service calls, long waits.
+
+Note: `CallWithTimeout` preserves the full return tuple from the function if it completes before the timeout.
 
 ## Example
 

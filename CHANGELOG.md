@@ -5,29 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0] - 2025-11-19
+## [1.4.0] - 2025-11-27
 
 ### Added
 
-- Added CallWithTag
-- Added CallWithThread
-- Added connectOnce option to ConnectSafe
+Not this update.
 
 ### Changed
 
-- Changed ProtectTable behavior to call functions from inherited metatables
+- Ensure `Call` and related wrappers (`CallWithTag`, `CallWithRetry`, `CallWithTimeout`, `CallBatch`, `CallAsync`) preserve multiple return values (including `nil`) so callers receive the exact tuple returned by wrapped functions.
+
+- Refactored `ProtectTable` to preserve method binding and metamethod behavior when proxying tables.
 
 ### Fixed
 
-- Fixed attempting to call Log function when nil
-- Fixed Call not returning tuples
+- Fixed `Call` not returning tuples; also fixed `CallWithRetry`, `CallWithTimeout`, `CallBatch`, and `WrapFunction` so they correctly propagate full multi-value returns.
+
+- Fixed `WrapFunction` and `BindableFunction` wrappers to return the exact tuple of values produced by the underlying callback (preserving `nil` values).
 
 ## Deprecated
 
-- Deprecated CallDeferred in favor of CallWithThread
-- Deprecated SetPromiseModule
-- Deprecated CallAsync
+Not this update.
 
 ### Removed
 
-- Removed contextTag parameter from Call
+Not this update.
