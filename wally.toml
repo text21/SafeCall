@@ -1,5 +1,5 @@
 [package]
-name = "akira/safecall"
+name = "text21/safecall"
 description = "A library for creating error and memory safe code."
 version = "1.2.0"
 license = "MIT"
