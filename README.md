@@ -16,7 +16,7 @@ It works standalone or integrates seamlessly with other frameworks (e.g. Promise
 
 Require it:
 
-```
+```lua
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SafeCall = require(ReplicatedStorage.Main.Modules.SafeCall)
 local safe = SafeCall.new()
@@ -39,7 +39,7 @@ Creates a new SafeCall instance.
 
 **Call**
 
-```
+```lua
 success, result = safe:Call(fn: function, ...any) -> (bool, any)
 ```
 
@@ -49,7 +49,7 @@ Note: `Call` and related helpers preserve the full tuple of return values from `
 
 **CallWithRetry**
 
-```
+```lua
 success, result = safe:CallWithRetry(fn: function, attempts?: number, delay?: number, backoff?: number, ...any)
 ```
 
@@ -66,7 +66,7 @@ Extras:
 
 **CallAsync**
 
-```
+```lua
 promise = safe:CallAsync(fn: function, ...any) -> Promise
 ```
 
@@ -80,7 +80,7 @@ Note: `CallAsync` resolves with the full tuple returned by `fn` (preserving `nil
 
 ## Example
 
-```
+```lua
 safe:CallAsync(function()
 	return someAsyncFunction()
 end):andThen(function(result)
@@ -92,7 +92,7 @@ Requires the Promise library. Errors are caught and passed to `.catch`.
 
 **CallDeferred**
 
-```
+```lua
 safe:CallDeferred(fn: function, ...any)
 Schedules `fn` to be called safely in a deferred (non-blocking) manner.
 ```
@@ -102,7 +102,7 @@ Schedules `fn` to be called safely in a deferred (non-blocking) manner.
 
 ## Example
 
-```
+```lua
 safe:CallDeferred(function()
 	print("Runs later, but safely!")
 end)
@@ -112,7 +112,7 @@ It’s like `task.defer` but with error safety built-in.
 
 **CallDelayed**
 
-```
+```lua
 success, result = safe:CallDelayed(delay: number, fn: function, ...any)
 ```
 
@@ -120,7 +120,7 @@ Waits `delay` seconds then calls `fn` safely.
 
 ## Example
 
-```
+```lua
 safe:CallDelayed(2, function()
 	print("Called after 2 seconds.")
 end)
@@ -131,7 +131,7 @@ end)
 
 **ProtectTable**
 
-```
+```lua
 protectedTable = safe:ProtectTable(tbl: table)
 ```
 
@@ -142,7 +142,7 @@ Returns a version of `tbl` where all functions are wrapped with safe calls.
 
 ## Example
 
-```
+```lua
 local unsafeUtils = {
 	PrintHello = function()
 		print("Hello")
@@ -160,7 +160,7 @@ safeUtils.BreakIt()    --> error is caught, doesn't crash
 
 **WrapEvent**
 
-```
+```lua
 connection = safe:WrapEvent(remote: RemoteEvent | BindableEvent, callback: function)
 ```
 
@@ -170,7 +170,7 @@ Wraps a remote or bindable event callback with safe error handling.
 
 ## Example
 
-```
+```lua
 safe:WrapEvent(RemoteEvent, function(player, data)
 	print(player.Name, data)
 end)
@@ -179,7 +179,7 @@ end)
 
 **WrapFunction**
 
-```
+```lua
 safe:WrapFunction(remote: RemoteFunction | BindableFunction, callback: function)
 ```
 
@@ -189,7 +189,7 @@ Wraps a remote or bindable function invocation callback safely.
 
 ## Example
 
-```
+```lua
 safe:WrapFunction(RemoteFunction, function(player, request)
 	return processRequest(request)
 end)
@@ -197,7 +197,7 @@ end)
 
 **CallBatch**
 
-```
+```lua
 results = safe:CallBatch(functions: {function})
 ```
 
@@ -209,7 +209,7 @@ Details: Each entry in `results` is a packed-result table (use `table.unpack(res
 
 ## Example
 
-```
+```lua
 local results = safe:CallBatch({
 	function() return "ok1" end,
 	function() error("bad2") end,
@@ -219,7 +219,7 @@ local results = safe:CallBatch({
 
 **CallWithTimeout**
 
-```
+```lua
 success, result = safe:CallWithTimeout(timeout: number, fn: function, ...any)
 ```
 
@@ -231,7 +231,7 @@ Note: `CallWithTimeout` preserves the full return tuple from the function if it 
 
 ## Example
 
-```
+```lua
 local success, result = safe:CallWithTimeout(5, function()
 	while true do task.wait() end
 end)
@@ -239,7 +239,7 @@ end)
 
 **Circuit Breaker**
 
-```
+```lua
 breaker = safe:CreateCircuitBreaker(threshold?: number, resetTime?: number)
 
 success, result = safe:CallWithCircuitBreaker(breaker, fn: function, ...any)
@@ -251,7 +251,7 @@ Creates a circuit breaker to stop calling `fn` if repeated failures occur, then 
 
 ## Example
 
-```
+```lua
 local breaker = safe:CreateCircuitBreaker(3, 10) -- 3 fails, 10s cooldown
 
 safe:CallWithCircuitBreaker(breaker, function()
@@ -261,7 +261,7 @@ end)
 
 **Rate Limiter**
 
-```
+```lua
 limiter = safe:CreateRateLimiter(maxCalls?: number, timeWindow?: number)
 
 success, result = safe:CallWithRateLimit(limiter, fn: function, ...any)
@@ -273,7 +273,7 @@ Safely connects to Roblox events/signals with automatic error handling and optio
 
 ## Example
 
-```
+```lua
 local limiter = safe:CreateRateLimiter(5, 10) -- Max 5 calls per 10s
 
 safe:CallWithRateLimit(limiter, function()
@@ -283,7 +283,7 @@ end)
 
 **ConnectSafe**
 
-```
+```lua
 connection = safe:ConnectSafe(
 	signal: RBXScriptSignal,
 	callback: (...any) -> (),
@@ -300,7 +300,7 @@ Safely connects to Roblox events/signals with automatic error handling and optio
 
 ## Example
 
-```
+```lua
 Baisc
 safe:ConnectSafe(part.Touched, function(hit)
 	print("Touched:", hit)
@@ -329,7 +329,7 @@ end, {
 
 **Memoize**
 
-```
+```lua
 memoizedFn = safe:Memoize(fn: function, ttl?: number)
 ```
 
@@ -339,7 +339,7 @@ Returns a memoized version of `fn` with cache TTL (time-to-live).
 
 ## Example
 
-```
+```lua
 local slowFn = safe:Memoize(function(x)
 	task.wait(2)
 	return x * 2
@@ -348,7 +348,7 @@ end, 10)
 
 **Profiling**
 
-```
+```lua
 profiler = safe:CreateProfiler()
 
 success, result = safe:CallWithProfiler(profiler, fn: function, ...any)
@@ -360,7 +360,7 @@ Profile calls for performance and error stats.
 **Use case**: Measure performance and error stats of your functions.
 **Best for**: Debugging slow or unstable code.
 
-```
+```lua
 local profiler = safe:CreateProfiler()
 
 safe:CallWithProfiler(profiler, function()
@@ -373,7 +373,7 @@ print(safe:GetProfilerStats(profiler))
 
 **Global Error Handlers**
 
-```
+```lua
 safe:AddGlobalHandler(handler: function)
 safe:RemoveGlobalHandler(handler: function)
 ```
@@ -385,7 +385,7 @@ Think of it like a **global listener** for all uncaught errors in SafeCall.
 
 ## Example
 
-```
+```lua
 local function globalLogger(err, traceback)
 	print("GLOBAL ERROR:", err)
 	print("Traceback:\n", traceback)
