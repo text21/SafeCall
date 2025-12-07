@@ -495,6 +495,10 @@ local result = SafeRemoteFunction:Invoke(21)
 print(result) --> 42
 ```
 
+> The following features are experimental and currently in beta.
+> They may change before becoming part of the stable 1.5 release.
+> Use in production at your own risk.
+
 </details>
 
 <details>
@@ -562,4 +566,161 @@ local function webhookLogger(err)
 end
 
 local safe = SafeCall.new(webhookLogger)
+```
+
+--
+
+### Experimental Features Examples
+
+## SafeSandbox – Usage Examples
+
+```lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SafeCall = require(ReplicatedStorage.SafeCall)
+
+local safe = SafeCall.new()
+
+-- Create a sandbox with a minimal allowed environment
+local sandbox = safe:CreateSandbox({
+	allowGlobals = false,
+	allowedEnv = {
+		math = math,
+		string = string,
+	},
+})
+
+sandbox:Run(function(env)
+	env.print("Hello from sandbox!")
+	env.print("Sin(1):", env.math.sin(1))
+
+	-- This will throw, but be caught by SafeCall internally
+	error("Sandboxed error")
+end)
+```
+
+## Sandbox with extra utilities and tagging
+
+```lua
+local sandbox = safe:CreateSandbox({
+	tag = "PluginSandbox",
+	allowGlobals = false,
+	allowedEnv = {
+		print = print,
+		math = math,
+		tick = tick,
+	},
+})
+
+-- You can pass data into the sandboxed function too
+sandbox:Run(function(env, code)
+	env.print("[Sandbox] Executing snippet:", code)
+
+	-- You could run compiled chunks or interpreted snippets here
+	local fn = loadstring(code)
+	if fn then
+		fn()
+	else
+		error("Invalid code")
+	end
+end, "print('Hello from inside snippet!')")
+```
+
+## SafeRemote – Usage Examples
+
+## SafeRemoteEvent – chat / action example
+
+```lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SafeCall = require(ReplicatedStorage.Main.Modules.SafeCall)
+
+local safe = SafeCall.new()
+
+local ChatEvent = ReplicatedStorage:WaitForChild("ChatEvent")
+
+-- Server-side
+local SafeChat = safe:CreateSafeRemoteEvent(ChatEvent, {
+	tag = "ChatRemote",
+	maxCallsPerMinute = 60, -- per player
+	validate = function(player, message)
+		if typeof(message) ~= "string" then
+			return false, "Message must be a string"
+		end
+		if #message == 0 or #message > 150 then
+			return false, "Message length out of range"
+		end
+		return true
+	end,
+})
+
+SafeChat:OnServer(function(player, message)
+	print(("[Chat] %s: %s"):format(player.Name, message))
+	-- broadcast, log, etc
+end)
+
+-- Client-side
+-- (same wrapper API, just require SafeCall and create the SafeRemoteEvent using the same RemoteEvent)
+local safe = SafeCall.new()
+local ChatEvent = ReplicatedStorage:WaitForChild("ChatEvent")
+local SafeChat = safe:CreateSafeRemoteEvent(ChatEvent)
+
+SafeChat:Fire("Hello world!")
+```
+
+## SafeRemoteFunction – validated request / response
+
+```lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SafeCall = require(ReplicatedStorage.Main.Modules.SafeCall)
+
+local safe = SafeCall.new()
+
+local DamageRequest = ReplicatedStorage:WaitForChild("DamageRequest")
+
+-- Server-side
+local SafeDamage = safe:CreateSafeRemoteFunction(DamageRequest, {
+	tag = "DamageRequest",
+	validate = function(player, targetId, amount)
+		if typeof(targetId) ~= "number" or typeof(amount) ~= "number" then
+			return false, "Invalid argument types"
+		end
+
+		if amount < 0 or amount > 50 then
+			return false, "Damage out of range"
+		end
+
+		return true
+	end,
+	maxCallsPerWindow = 10,
+	windowSeconds = 5,
+})
+
+SafeDamage:OnInvoke(function(player, targetId, amount)
+	-- You’re guaranteed validated args here
+	print(player.Name, "requested", amount, "damage on", targetId)
+
+	-- Apply damage, look up target, etc.
+	local success = true
+	local newHealth = 80
+
+	return success, newHealth
+end)
+
+-- Client-side
+local safe = SafeCall.new()
+local DamageRequest = ReplicatedStorage:WaitForChild("DamageRequest")
+local SafeDamage = safe:CreateSafeRemoteFunction(DamageRequest)
+
+local ok, success, newHealth = safe:Call(function()
+	return SafeDamage:Invoke(1234, 20)
+end)
+
+if ok and success then
+	print("New health:", newHealth)
+else
+	warn("Damage request failed:", success or newHealth)
+end
+```
+
+```
+
 ```
