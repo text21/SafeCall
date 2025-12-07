@@ -720,7 +720,3 @@ else
 	warn("Damage request failed:", success or newHealth)
 end
 ```
-
-```
-
-```
