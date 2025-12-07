@@ -568,8 +568,6 @@ end
 local safe = SafeCall.new(webhookLogger)
 ```
 
---
-
 ### Experimental Features Examples
 
 ## SafeSandbox – Usage Examples
