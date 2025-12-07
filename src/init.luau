@@ -3,13 +3,46 @@
 	Description: Lightweight fail-safe wrapper for unsafe function calls
 	Repository: text21/SafeCall
 	Author: Akira
-	Version: 1.4.0
+	Version: 1.5.0-beta.1
 --]]
 
 local SafeCall = {}
 SafeCall.__index = SafeCall
 
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local SafeSandbox = {}
+SafeSandbox.__index = SafeSandbox
+
+local SafeRemoteEvent = {}
+SafeRemoteEvent.__index = SafeRemoteEvent
+
+local SafeRemoteFunction = {}
+SafeRemoteFunction.__index = SafeRemoteFunction
+
+local function resolveRemote(remoteOrName, className)
+	if typeof(remoteOrName) == "Instance" then
+		assert(remoteOrName:IsA(className), "SafeCall: remote instance must be a " .. className)
+		return remoteOrName
+	end
+
+	assert(type(remoteOrName) == "string", "SafeCall: remote name must be a string or Instance")
+
+	local existing = ReplicatedStorage:FindFirstChild(remoteOrName)
+	if existing and existing:IsA(className) then
+		return existing
+	end
+
+	if RunService:IsServer() then
+		local inst = Instance.new(className)
+		inst.Name = remoteOrName
+		inst.Parent = ReplicatedStorage
+		return inst
+	else
+		error(("SafeCall: %s '%s' not found in ReplicatedStorage"):format(className, remoteOrName))
+	end
+end
 
 function SafeCall.new(logFunction)
 	local self = setmetatable({
@@ -320,7 +353,9 @@ function SafeCall:CallWithTimeout(timeout, fn, ...)
 	end)
 
 	local start = tick()
-	while not done and tick() - start < timeout do task.wait() end
+	while not done and tick() - start < timeout do
+		task.wait()
+	end
 
 	if done then
 		return table.unpack(result)
@@ -356,7 +391,9 @@ function SafeCall:CallWithCircuitBreaker(breaker, fn, ...)
 	local ok, res = self:Call(fn, ...)
 
 	if ok then
-		if breaker.state == "HALF_OPEN" then breaker.state = "CLOSED" end
+		if breaker.state == "HALF_OPEN" then
+			breaker.state = "CLOSED"
+		end
 		breaker.failures = 0
 	else
 		breaker.failures += 1
@@ -475,8 +512,12 @@ function SafeCall:CallWithProfiler(profiler, fn, ...)
 	local dt = tick() - start
 
 	profiler.totalTime += dt
-	if not ok then profiler.errors += 1 end
-	if dt > profiler.slowThreshold then profiler.slowCalls += 1 end
+	if not ok then
+		profiler.errors += 1
+	end
+	if dt > profiler.slowThreshold then
+		profiler.slowCalls += 1
+	end
 
 	return ok, res
 end
@@ -506,7 +547,9 @@ function SafeCall:RemoveGlobalHandler(handler)
 end
 
 function SafeCall:Schedule(name, interval, fn)
-	if self._taskScheduler[name] then return end
+	if self._taskScheduler[name] then
+		return
+	end
 	self._taskScheduler[name] = true
 
 	task.spawn(function()
@@ -519,6 +562,312 @@ end
 
 function SafeCall:StopSchedule(name)
 	self._taskScheduler[name] = nil
+end
+
+function SafeCall:CreateSandbox(options)
+	options = options or {}
+
+	local env = {}
+
+	if options.includeStandard ~= false then
+		env.math = math
+		env.string = string
+		env.table = table
+		env.ipairs = ipairs
+		env.pairs = pairs
+		env.tonumber = tonumber
+		env.tostring = tostring
+		env.type = type
+		env.error = error
+		env.warn = warn
+		env.select = select
+		env.next = next
+		env.assert = assert
+	end
+
+	if options.allowedServices then
+		local services = {}
+		for _, name in ipairs(options.allowedServices) do
+			local ok, svc = pcall(game.GetService, game, name)
+			if ok and svc then
+				services[name] = svc
+			end
+		end
+		env.Services = services
+	end
+
+	if options.env then
+		for k, v in pairs(options.env) do
+			env[k] = v
+		end
+	end
+
+	if options.readonly ~= false then
+		local readonly = {}
+		setmetatable(readonly, {
+			__index = env,
+			__newindex = function()
+				error("SafeSandbox: Attempt to modify readonly environment", 2)
+			end,
+		})
+		env = readonly
+	end
+
+	local name = options.name or "Sandbox"
+
+	local sbx = setmetatable({
+		_env = env,
+		_safe = self,
+		_name = name,
+	}, SafeSandbox)
+
+	return sbx
+end
+
+function SafeSandbox:GetEnv()
+	return self._env
+end
+
+function SafeSandbox:Run(fn, ...)
+	assert(typeof(fn) == "function", "SafeSandbox:Run expects a function")
+	return self._safe:CallWithTag(self._name, fn, self._env, ...)
+end
+
+function SafeSandbox:Wrap(fn)
+	assert(typeof(fn) == "function", "SafeSandbox:Wrap expects a function")
+	local env = self._env
+	local safe = self._safe
+	local name = self._name
+
+	return function(...)
+		return safe:CallWithTag(name, fn, env, ...)
+	end
+end
+
+local function newRateLimiter(config)
+	config = config or {}
+	return {
+		calls = {},
+		maxCalls = config.maxCalls or 20,
+		timeWindow = config.timeWindow or 1,
+	}
+end
+
+local function checkRate(limiter)
+	local now = tick()
+	local calls = limiter.calls
+
+	for i = #calls, 1, -1 do
+		if now - calls[i] > limiter.timeWindow then
+			table.remove(calls, i)
+		end
+	end
+
+	if #calls >= limiter.maxCalls then
+		return false
+	end
+
+	table.insert(calls, now)
+	return true
+end
+
+function SafeCall:CreateSafeRemoteEvent(remoteOrName, config)
+	config = config or {}
+
+	local remote = resolveRemote(remoteOrName, "RemoteEvent")
+
+	local selfWrapper = setmetatable({
+		_safe = self,
+		Remote = remote,
+		_config = config,
+		_serverHandler = nil,
+		_clientHandler = nil,
+		_ratePerPlayer = {},
+	}, SafeRemoteEvent)
+
+	local tag = config.tag or ("RemoteEvent:" .. remote.Name)
+
+	if RunService:IsServer() then
+		remote.OnServerEvent:Connect(function(player, ...)
+			local key = player and player.UserId or 0
+
+			if config.rateLimit then
+				local limiter = selfWrapper._ratePerPlayer[key]
+				if not limiter then
+					limiter = newRateLimiter(config.rateLimit)
+					selfWrapper._ratePerPlayer[key] = limiter
+				end
+
+				if not checkRate(limiter) then
+					self:CallWithTag(tag, function()
+						self.Log(("[SafeRemoteEvent] Rate limit exceeded for %s"):format(player and player.Name or "?"))
+					end)
+					return
+				end
+			end
+
+			if config.validate then
+				local ok, reason = config.validate(player, ...)
+				if not ok then
+					self:CallWithTag(tag, function()
+						self.Log(("[SafeRemoteEvent] Validation failed: %s"):format(tostring(reason)))
+					end)
+					return
+				end
+			end
+
+			if selfWrapper._serverHandler then
+				self:CallWithTag(tag, selfWrapper._serverHandler, player, ...)
+			end
+		end)
+	else
+		remote.OnClientEvent:Connect(function(...)
+			if selfWrapper._clientHandler then
+				self:CallWithTag(tag, selfWrapper._clientHandler, ...)
+			end
+		end)
+	end
+
+	return selfWrapper
+end
+
+function SafeRemoteEvent:OnServer(callback)
+	assert(RunService:IsServer(), "SafeRemoteEvent:OnServer can only be used on the server")
+	assert(typeof(callback) == "function", "OnServer expects a function")
+	self._serverHandler = callback
+	return self
+end
+
+function SafeRemoteEvent:OnClient(callback)
+	assert(not RunService:IsServer(), "SafeRemoteEvent:OnClient can only be used on the client")
+	assert(typeof(callback) == "function", "OnClient expects a function")
+	self._clientHandler = callback
+	return self
+end
+
+function SafeRemoteEvent:FireServer(...)
+	assert(not RunService:IsServer(), "FireServer can only be called from the client")
+	self.Remote:FireServer(...)
+end
+
+function SafeRemoteEvent:FireClient(player, ...)
+	assert(RunService:IsServer(), "FireClient can only be called from the server")
+	self.Remote:FireClient(player, ...)
+end
+
+function SafeRemoteEvent:FireAllClients(...)
+	assert(RunService:IsServer(), "FireAllClients can only be called from the server")
+	self.Remote:FireAllClients(...)
+end
+
+function SafeRemoteEvent:GetRemote()
+	return self.Remote
+end
+
+function SafeCall:CreateSafeRemoteFunction(remoteOrName, config)
+	config = config or {}
+
+	local remote = resolveRemote(remoteOrName, "RemoteFunction")
+
+	local selfWrapper = setmetatable({
+		_safe = self,
+		Remote = remote,
+		_config = config,
+		_serverHandler = nil,
+		_clientHandler = nil,
+		_ratePerPlayer = {},
+	}, SafeRemoteFunction)
+
+	local tag = config.tag or ("RemoteFunction:" .. remote.Name)
+
+	if RunService:IsServer() then
+		remote.OnServerInvoke = function(player, ...)
+			local key = player and player.UserId or 0
+
+			if config.rateLimit then
+				local limiter = selfWrapper._ratePerPlayer[key]
+				if not limiter then
+					limiter = newRateLimiter(config.rateLimit)
+					selfWrapper._ratePerPlayer[key] = limiter
+				end
+
+				if not checkRate(limiter) then
+					selfWrapper._safe:CallWithTag(tag, function()
+						selfWrapper._safe.Log(("[SafeRemoteFunction] Rate limit exceeded for %s"):format(
+							player and player.Name or "?"
+						))
+					end)
+					return nil
+				end
+			end
+
+			if config.validate then
+				local ok, reason = config.validate(player, ...)
+				if not ok then
+					selfWrapper._safe:CallWithTag(tag, function()
+						selfWrapper._safe.Log(("[SafeRemoteFunction] Validation failed: %s"):format(tostring(reason)))
+					end)
+					return nil
+				end
+			end
+
+			if not selfWrapper._serverHandler then
+				return nil
+			end
+
+			local resPack = table.pack(selfWrapper._safe:CallWithTag(tag, selfWrapper._serverHandler, player, ...))
+			local ok = resPack[1]
+			if ok then
+				return table.unpack(resPack, 2, resPack.n)
+			end
+
+			return nil
+		end
+	else
+		remote.OnClientInvoke = function(...)
+			if not selfWrapper._clientHandler then
+				return nil
+			end
+
+			local resPack = table.pack(selfWrapper._safe:CallWithTag(tag, selfWrapper._clientHandler, ...))
+			local ok = resPack[1]
+			if ok then
+				return table.unpack(resPack, 2, resPack.n)
+			end
+
+			return nil
+		end
+	end
+
+	return selfWrapper
+end
+
+function SafeRemoteFunction:OnServer(callback)
+	assert(RunService:IsServer(), "SafeRemoteFunction:OnServer can only be used on the server")
+	assert(typeof(callback) == "function", "OnServer expects a function")
+	self._serverHandler = callback
+	return self
+end
+
+function SafeRemoteFunction:OnClient(callback)
+	assert(not RunService:IsServer(), "SafeRemoteFunction:OnClient can only be used on the client")
+	assert(typeof(callback) == "function", "OnClient expects a function")
+	self._clientHandler = callback
+	return self
+end
+
+function SafeRemoteFunction:InvokeServer(...)
+	assert(not RunService:IsServer(), "InvokeServer can only be used on the client")
+	return self.Remote:InvokeServer(...)
+end
+
+function SafeRemoteFunction:InvokeClient(player, ...)
+	assert(RunService:IsServer(), "InvokeClient can only be used on the server")
+	return self.Remote:InvokeClient(player, ...)
+end
+
+function SafeRemoteFunction:GetRemote()
+	return self.Remote
 end
 
 return SafeCall

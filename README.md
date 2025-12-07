@@ -398,6 +398,103 @@ safe:Call(function()
 end)
 ```
 
+## Advanced Features
+
+Experimental: SafeSandbox
+SafeCall now includes an optional sandbox environment that allows running untrusted or user-generated code safely with a locked-down environment.
+
+The sandbox prevents access to dangerous globals and wraps all executed code with SafeCall internally.
+
+## Create a sandbox
+
+```lua
+local sandbox = safe:CreateSandbox({
+	allowGlobals = false,
+	allowedEnv = {
+		math = math,
+		string = string,
+	},
+})
+```
+
+## Run code inside the sandbox
+
+```lua
+sandbox:Run(function(env)
+	env.print("Hello from sandbox")
+	env.error("This will be caught safely")
+end)
+```
+
+## Beta Features
+
+- Isolated environment table
+- No access to Roblox globals unless explicitly added
+- All sandboxed calls pass through SafeCall
+- Prevents runaway infinite loops (soft protection)
+- Perfect for plugin dev, hot-reload systems, inspectable code, or unsafe 3rd-party logic
+
+### Experimental: SafeRemote
+
+SafeRemote adds security wrappers for RemoteEvent and RemoteFunction:
+
+- Rate limiting per-player
+- Argument validation
+- Auto SafeCall protection
+- Carries over full error logs
+- Prevents client spam & exploit payloads
+- Drop-in replacement for normal remotes
+
+### Create a SafeRemoteEvent
+
+```lua
+local SafeRemoteEvent = safe:CreateSafeRemoteEvent(remote, {
+	maxCallsPerMinute = 60,
+	validate = function(player, arg1, arg2)
+		return typeof(arg1) == "string"
+	end,
+})
+```
+
+## Listen
+
+```lua
+SafeRemoteEvent:OnServer(function(player, msg)
+	print("Player said:", msg)
+end)
+```
+
+## Client send
+
+```lua
+SafeRemoteEvent:Fire("Hello world")
+```
+
+## Create a SafeRemoteFunction
+
+```lua
+local SafeRemoteFunction = safe:CreateSafeRemoteFunction(remote, {
+	validate = function(player, input)
+		return typeof(input) == "number"
+	end,
+})
+```
+
+## Server implementation
+
+```lua
+SafeRemoteFunction:OnInvoke(function(player, num)
+	return num * 2
+end)
+```
+
+## Client call
+
+```lua
+local result = SafeRemoteFunction:Invoke(21)
+print(result) --> 42
+```
+
 </details>
 
 <details>

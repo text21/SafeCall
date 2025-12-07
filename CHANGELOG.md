@@ -1,32 +1,30 @@
-# Changelog
-
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [1.4.0] - 2025-11-27
+## [1.5.0-beta] - 2025-12-05
 
 ### Added
 
-Not this update.
+- **SafeSandbox (experimental):** Allows execution of untrusted or dynamic code in an isolated environment with protected globals, optional whitelisting, and SafeCall-wrapped execution.
+- **SafeRemote (experimental):** New SafeRemoteEvent and SafeRemoteFunction wrappers featuring:
+  - Per-player rate limiting
+  - Argument validation hooks
+  - Automatic SafeCall protection
+  - Error propagation & safer security defaults
+  - Fully preserved multi-value returns
 
 ### Changed
 
-- Ensure `Call` and related wrappers (`CallWithTag`, `CallWithRetry`, `CallWithTimeout`, `CallBatch`, `CallAsync`) preserve multiple return values (including `nil`) so callers receive the exact tuple returned by wrapped functions.
-
-- Refactored `ProtectTable` to preserve method binding and metamethod behavior when proxying tables.
+- Internal execution paths updated to support sandboxed environments.
+- SafeCall now exposes `CreateSandbox`, `CreateSafeRemoteEvent`, and `CreateSafeRemoteFunction`.
 
 ### Fixed
 
-- Fixed `Call` not returning tuples; also fixed `CallWithRetry`, `CallWithTimeout`, `CallBatch`, and `WrapFunction` so they correctly propagate full multi-value returns.
+- Minor inconsistencies in error forwarding for nested async calls.
 
-- Fixed `WrapFunction` and `BindableFunction` wrappers to return the exact tuple of values produced by the underlying callback (preserving `nil` values).
+### Deprecated
 
-## Deprecated
-
-Not this update.
+- None this update.
 
 ### Removed
 
-Not this update.
+- None this update.
+
+> This is a **beta release**. API surface for SafeSandbox and SafeRemote may change after developer feedback.
